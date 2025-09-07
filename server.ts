@@ -22,48 +22,65 @@ app.use((req, res, next) => {
 
 app.post('/api/tts', async (req, res) => {
   try {
-    const { text, voiceId = '21m00Tcm4TlvDq8ikWAM' } = req.body || {};
+    // Use the user-provided voice ID for storytelling
+    const { text, voiceId = 'WtA85syCrJwasGeHGH2p' } = req.body || {};
     if (!process.env.ELEVENLABS_API_KEY) return res.status(500).json({ error: 'ELEVENLABS_API_KEY missing' });
     
-    // For now, return a simple success response since the API key has permission issues
-    // In a real implementation, you would fix the API key permissions
     console.log('TTS request for text:', text);
-    res.json({ 
-      success: true, 
-      message: 'TTS functionality temporarily disabled due to API key permissions',
-      text: text 
+    
+    // Try the ElevenLabs API with proper headers
+    const response = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${voiceId}`, {
+      method: 'POST',
+      headers: {
+        'Accept': 'audio/mpeg',
+        'Content-Type': 'application/json',
+        'xi-api-key': process.env.ELEVENLABS_API_KEY
+      },
+      body: JSON.stringify({
+        text: text,
+        // Use multilingual v2 to improve language support and quality
+        model_id: 'eleven_multilingual_v2',
+        output_format: 'mp3_44100_128',
+        voice_settings: {
+          stability: 0.5,
+          similarity_boost: 0.5
+        }
+      })
     });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.error('ElevenLabs API error:', response.status, errorText);
+      
+      let errorMessage = `ElevenLabs API Error (${response.status}): `;
+      
+      if (response.status === 429) {
+        errorMessage += 'Resource exhausted - you have reached your ElevenLabs API quota limit. Please check your account usage or upgrade your plan.';
+      } else if (response.status === 401) {
+        errorMessage += 'Authentication failed - please check your ElevenLabs API key permissions.';
+      } else if (response.status === 400) {
+        errorMessage += 'Bad request - the text might be too long or invalid.';
+      } else {
+        errorMessage += errorText || 'Unknown error occurred.';
+      }
+      
+      return res.status(500).json({ error: errorMessage });
+    }
+
+    // Set proper headers for audio response
+    res.setHeader('Content-Type', 'audio/mpeg');
+    res.setHeader('Content-Disposition', 'attachment; filename="speech.mp3"');
+    
+    // Stream the audio data
+    response.body.pipe(res);
+    
   } catch (e: any) {
+    console.error('TTS error:', e);
     res.status(500).json({ error: e.message || 'tts failed' });
   }
 });
 
-app.post('/api/grid', async (req, res) => {
-  try {
-    const { image_urls, grid_cols = 2 } = req.body || {};
-    
-    // For now, let's create a simple grid layout without Fal.ai
-    // This is a fallback solution that creates a basic grid
-    if (!image_urls || image_urls.length === 0) {
-      return res.status(400).json({ error: 'No images provided' });
-    }
-
-    // Create a simple grid layout response
-    // In a real implementation, you would use a proper image processing library
-    // For now, we'll return the first image as a placeholder
-    const gridResult = {
-      images: [{
-        url: image_urls[0], // Use first image as placeholder
-        width: 800,
-        height: 600
-      }]
-    };
-    
-    res.json(gridResult);
-  } catch (e: any) {
-    res.status(500).json({ error: e.message || 'grid failed' });
-  }
-});
+// Grid endpoint removed - now using client-side video generation
 
 const port = process.env.PORT || 5174;
 app.listen(port, () => {
