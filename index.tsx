@@ -5,11 +5,7 @@
 import { GoogleGenAI, Type, Modality, Part } from "@google/genai";
 
 // --- API KEYS ---
-// These keys were provided for integration. In a real-world application,
-// these should be managed securely, for example, via environment variables
-// or a backend service.
-const FAL_API_KEY = 'fa3435b9-bdfc-43ae-874d-ee78c7edb7be:018c4746c2a139c8b6b8699fa3e7977b';
-const ELEVENLABS_API_KEY = 'sk_ffd29c2e2530c8da9a97b9bb26867811e84f1ac50dcd5057';
+// API keys are now handled securely via server-side proxy routes
 
 
 // --- STATE MANAGEMENT ---
@@ -60,19 +56,20 @@ function setState(newState: Partial<AppState>) {
 
 // --- GEMINI API SETUP ---
 // Critical check: Ensure API key exists before initializing the library.
-if (!process.env.API_KEY) {
+const GEMINI_API_KEY = import.meta.env.VITE_GEMINI_API_KEY;
+if (!GEMINI_API_KEY) {
     const appRoot = document.getElementById('app');
     if (appRoot) {
         appRoot.innerHTML = `<div class="container" style="text-align: center;">
             <div class="error-message">
-                <strong>Fatal Error:</strong> Missing Google API Key. The application cannot be initialized.
+                <strong>Fatal Error:</strong> Missing VITE_GEMINI_API_KEY. The application cannot be initialized.
             </div>
         </div>`;
     }
     // Halt script execution to prevent further errors.
-    throw new Error("FATAL: process.env.API_KEY is not defined.");
+    throw new Error("FATAL: VITE_GEMINI_API_KEY is not defined.");
 }
-const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+const ai = new GoogleGenAI({ apiKey: GEMINI_API_KEY });
 
 // --- API HELPER FUNCTIONS ---
 
@@ -227,70 +224,54 @@ async function renderPanel(panelPrompt: string, characterRefs: { base64: string,
 }
 
 /**
- * Generates audio from text using ElevenLabs API.
+ * Generates audio from text using ElevenLabs API via server proxy.
  */
 async function generateAudio(text: string): Promise<string | null> {
-    if (!ELEVENLABS_API_KEY || !text.trim()) return null;
-    const VOICE_ID = '21m00Tcm4TlvDq8ikWAM'; // A common default voice
-    const url = `https://api.elevenlabs.io/v1/text-to-speech/${VOICE_ID}`;
-
+    if (!text.trim()) return null;
     try {
-        const response = await fetch(url, {
+        const r = await fetch('/api/tts', {
             method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                'xi-api-key': ELEVENLABS_API_KEY,
-            },
-            body: JSON.stringify({
-                text: text,
-                model_id: 'eleven_multilingual_v2',
-            }),
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ text })
         });
-        if (!response.ok) throw new Error(`ElevenLabs API error: ${response.statusText}`);
-        const blob = await response.blob();
-        return URL.createObjectURL(blob);
-    } catch (error) {
-        console.error("ElevenLabs error:", error);
-        return null; // Don't block the comic if audio fails
+        if (!r.ok) throw new Error(`tts ${r.status}`);
+        
+        // Check if response is JSON (new format) or blob (audio)
+        const contentType = r.headers.get('content-type');
+        if (contentType && contentType.includes('application/json')) {
+            const result = await r.json();
+            console.log('TTS response:', result.message);
+            return null; // No audio for now due to API key permissions
+        } else {
+            const blob = await r.blob();
+            return URL.createObjectURL(blob);
+        }
+    } catch (e) {
+        console.error('tts error', e);
+        return null;
     }
 }
 
 /**
- * Uses Fal.ai to generate a final comic strip layout.
+ * Uses Fal.ai to generate a final comic strip layout via server proxy.
  */
 async function generateComicLayout(title: string, panels: { image: { base64: string }, caption: string }[]): Promise<{ base64: string, mimeType: string }> {
-    if (!FAL_API_KEY) throw new Error("Fal.ai API key is not configured.");
-    const FAL_URL = 'https://fal.run/fal-ai/imageutils/grid'; 
-    
-    const imageUrls = panels.map(p => `data:image/png;base64,${p.image.base64}`);
+    const image_urls = panels.map(p => `data:image/png;base64,${p.image.base64}`);
     const gridCols = state.userInput.panelCount <= 4 ? 2 : 3;
 
-    const response = await fetch(FAL_URL, {
+    const r = await fetch('/api/grid', {
         method: 'POST',
-        headers: {
-            'Authorization': `Key ${FAL_API_KEY}`,
-            'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({ 
-            image_urls: imageUrls,
-            grid_cols: gridCols,
-         })
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ image_urls, grid_cols: gridCols })
     });
+    if (!r.ok) throw new Error(`Fal grid ${r.status}`);
+    const result = await r.json();
 
-    if (!response.ok) throw new Error(`Fal.ai API error: ${response.statusText}`);
-
-    const result = await response.json();
-    if (!result.images || result.images.length === 0 || !result.images[0].url) {
-        throw new Error("Fal.ai did not return a valid image.");
-    }
-    const resultImage = result.images[0];
-    const imageUrlParts = resultImage.url.split(',');
-
-    if (imageUrlParts.length < 2 || !imageUrlParts[1]) {
-        throw new Error("Fal.ai returned an unexpected image URL format.");
-    }
-    
-    return { base64: imageUrlParts[1], mimeType: 'image/png' };
+    // existing parsing
+    if (!result.images?.[0]?.url) throw new Error('No grid image returned');
+    const url = result.images[0].url;
+    const base64 = url.split(',')[1] || '';
+    return { base64, mimeType: 'image/png' };
 }
 
 
