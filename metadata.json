@@ -1,0 +1,7 @@
+{
+  "name": "AI Comic Strip Generator",
+  "description": "Turn your drawings and stories into a unique comic strip with the power of AI!",
+  "requestFramePermissions": [
+    "camera"
+  ]
+}
